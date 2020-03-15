@@ -69,8 +69,8 @@ start(GenMod, LinkP, Name, Mod, Args, Options) ->
   % もっと奥底の，実際に `register_name' を呼ぶ処理の箇所でもエラー処理が行なわれるが，
   % ここで早いうちにもやっておくらしい．
     case where(Name) of
-	undefined -> do_spawn(GenMod, LinkP, Name, Mod, Args, Options);
-	Pid       -> {error, {already_started, Pid}}
+        undefined -> do_spawn(GenMod, LinkP, Name, Mod, Args, Options);
+        Pid       -> {error, {already_started, Pid}}
     end.
 
 
@@ -98,7 +98,7 @@ do_spawn(GenMod, link, Mod, Args, Options) ->
       % 下の `spawn_opts/1' も同様に `spawn_opt' の値を取り出す．
     proc_lib:start_link(
         ?MODULE, init_it,
-	[GenMod, self(), self(), Mod, Args, Options],
+        [GenMod, self(), self(), Mod, Args, Options],
         Time, spawn_opts(Options));
       % 同期的にプロセスを開始する．
       % `proc_lib:start_link' は `proc_lib' 参照．
@@ -153,8 +153,8 @@ init_it(GenMod, Starter, Parent, Mod, Args, Options) ->
 % `init/6' の登録名あり版．ここで実際に名前を登録する．
 init_it(GenMod, Starter, Parent, Name, Mod, Args, Options) ->
     case register_name(Name) of
-	true         -> init_it2(GenMod, Starter, Parent, Name, Mod, Args, Options);
-	{false, Pid} -> proc_lib:init_ack(Starter, {error, {already_started, Pid}})
+        true         -> init_it2(GenMod, Starter, Parent, Name, Mod, Args, Options);
+        {false, Pid} -> proc_lib:init_ack(Starter, {error, {already_started, Pid}})
     end.
       % 自身の名前を登録する．ここで失敗した場合は `proc_lib:init_ack/2' を通じて
       % `start' や `start_link' を呼び出したプロセスに戻り値 `{error, …}' を返す．
@@ -219,8 +219,8 @@ do_for_proc(Pid, Fun) when is_pid(Pid) ->
 
 do_for_proc(Name, Fun) when is_atom(Name) ->
     case whereis(Name) of
-	Pid when is_pid(Pid) -> Fun(Pid);
-	undefined            -> exit(noproc)
+        Pid when is_pid(Pid) -> Fun(Pid);
+        undefined            -> exit(noproc)
     end;
 
 

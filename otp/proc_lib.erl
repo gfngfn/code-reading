@@ -55,8 +55,8 @@ sync_start_link(Pid, Timeout) ->
   % これを生成したプロセス側が呼び出さねばならない．
   % `proc_lib:init_ack' を呼び出している実装は `gen' などではなく `gen_server' などにある．
     receive
-	{ack, Pid, Return}    -> Return;
-	{'EXIT', Pid, Reason} -> {error, Reason}
+        {ack, Pid, Return}    -> Return;
+        {'EXIT', Pid, Reason} -> {error, Reason}
     after Timeout ->
         kill_flush(Pid),
         {error, timeout}
@@ -144,10 +144,10 @@ init_p(Parent, Ancestors, Fun) when is_function(Fun) ->
     put('$initial_call', Mfa),
       % 起動時の函数を記録する？
     try
-	Fun()
+        Fun()
     catch
-	Class:Reason:Stacktrace ->
-	    exit_p(Class, Reason, Stacktrace)
+        Class:Reason:Stacktrace ->
+            exit_p(Class, Reason, Stacktrace)
     end.
 
 
@@ -166,10 +166,10 @@ init_p(Parent, Ancestors, M, F, A) when is_atom(M), is_atom(F), is_list(A) ->
 % `init_p/5' だけで使われる．スタックトレースをとるために咬まされている？
 init_p_do_apply(M, F, A) ->
     try
-	apply(M, F, A)
+        apply(M, F, A)
     catch
-	Class:Reason:Stacktrace ->
-	    exit_p(Class, Reason, Stacktrace)
+        Class:Reason:Stacktrace ->
+            exit_p(Class, Reason, Stacktrace)
     end.
 
 
@@ -186,8 +186,8 @@ get_my_name() ->
           % `process_info(Pid, registered_name)` の戻り値は `[] | {registered_name, atom()}` の形式．
           % Name :: atom()
     of
-	{registered_name, Name} -> Name;
-	_                       -> self()
+        {registered_name, Name} -> Name;
+        _                       -> self()
     end.
 
 
@@ -196,8 +196,8 @@ get_my_name() ->
 -spec get_ancestors() -> [proc_identifier()].
 get_ancestors() ->
     case get('$ancestors') of
-	A when is_list(A) -> A;
-	_                 -> []  % OTPプロセスでない場合は先祖なし扱い．
+        A when is_list(A) -> A;
+        _                 -> []  % OTPプロセスでない場合は先祖なし扱い．
     end.
 
 
@@ -210,6 +210,6 @@ proc_info(Pid, Item) when node(Pid) =:= node() ->
 proc_info(Pid, Item) ->
   % 呼び出したプロセスと `Pid' が別ノードにある場合は `process_info' を `rpc:call' で実行する．
     case lists:member(node(Pid), nodes()) of
-	true -> check(rpc:call(node(Pid), erlang, process_info, [Pid, Item]));
-	_    -> hidden
+        true -> check(rpc:call(node(Pid), erlang, process_info, [Pid, Item]));
+        _    -> hidden
     end.
