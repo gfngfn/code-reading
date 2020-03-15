@@ -50,6 +50,11 @@ call(Name, Request, Timeout) ->
     end.
 
 
+% 非同期的な送信を行なうための，公開された函数．
+% 奥で使われている `do_send' の実装を見るとわかるが，
+% 通常の `!' と同様に既に存在しないプロセスのPIDを与えても失敗しないだけでなく，
+% `Dest' に登録名として存在しないアトムなどを与えても失敗しないことに注意
+% （`!' は登録名として存在しないアトムなどを与えると `badarg' の `error' 例外送出）．
 -spec cast(Dest :: gen:server_ref(), Request :: _) -> 'ok'.
 cast({global, Name}, Request) ->
   % Name :: _
@@ -60,12 +65,12 @@ cast({via, Mod, Name}, Request) ->
     catch Mod:send(Name, cast_msg(Request)),
     ok;
 
-
 cast({Name, Node} = Dest, Request) when is_atom(Name), is_atom(Node) -> do_cast(Dest, Request);
 cast(Dest, Request) when is_atom(Dest)                               -> do_cast(Dest, Request);
 cast(Dest, Request) when is_pid(Dest)                                -> do_cast(Dest, Request).
 
 
+% 呼び出し時に `Dest' が実際に `gen:server_ref()' の形式であることが保証された，`cast' のすぐ内側の函数．
 -spec do_cast(Dest :: gen:server_ref(), Request :: _) -> 'ok'.
 do_cast(Dest, Request) ->
     do_send(Dest, cast_msg(Request)),
@@ -77,6 +82,7 @@ cast_msg(Request) -> {'$gen_cast', Request}.
 
 
 % ほぼ `!` による送信と同じだが，`error' 例外が返ってきても無視する．
+% `Dest' が `gen:server_ref()' の形式を満たしている限り，エラーは `Dest' が存在しない登録名だった場合のみ．
 -spec do_send(Dest :: gen:server_ref(), Msg :: _) -> 'ok'.
 do_send(Dest, Msg) ->
     try
