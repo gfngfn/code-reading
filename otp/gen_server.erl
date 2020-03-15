@@ -20,7 +20,8 @@
 -module(gen_server).
 
 
-%% `start'，`start_link'，`start_monitor' は `gen:start' のラッパ．
+% `start'，`start_link'，`start_monitor' は `gen:start' のラッパ．
+% `Name :: gen:emgr_name()'
 start(Mod, Args, Options)               -> gen:start(?MODULE, nolink, Mod, Args, Options).
 start(Name, Mod, Args, Options)         -> gen:start(?MODULE, nolink, Name, Mod, Args, Options).
 start_link(Mod, Args, Options)          -> gen:start(?MODULE, link, Mod, Args, Options).
@@ -34,12 +35,14 @@ stop(Name)                  -> gen:stop(Name).
 stop(Name, Reason, Timeout) -> gen:stop(Name, Reason, Timeout).
 
 
+-spec call(Name :: gen:server_ref(), Request :: _) -> Reply :: _.
 call(Name, Request) ->
     case catch gen:call(Name, '$gen_call', Request) of
         {ok, Res}        -> Res;
         {'EXIT', Reason} -> exit({Reason, {?MODULE, call, [Name, Request]}})
     end.
 
+-spec call(Name :: gen:server_ref(), Request :: _, timeout()) -> Reply :: _.
 call(Name, Request, Timeout) ->
     case catch gen:call(Name, '$gen_call', Request, Timeout) of
         {ok, Res}        -> Res;
@@ -47,7 +50,9 @@ call(Name, Request, Timeout) ->
     end.
 
 
+-spec cast(Dest :: gen:server_ref(), Request :: _) -> 'ok'.
 cast({global, Name}, Request) ->
+  % Name :: _
     catch global:send(Name, cast_msg(Request)),
     ok;
 
@@ -56,12 +61,12 @@ cast({via, Mod, Name}, Request) ->
     ok;
 
 
-cast({Name,Node} = Dest, Request) when is_atom(Name), is_atom(Node) -> do_cast(Dest, Request);
-cast(Dest, Request) when is_atom(Dest)                              -> do_cast(Dest, Request);
-cast(Dest, Request) when is_pid(Dest)                               -> do_cast(Dest, Request).
+cast({Name, Node} = Dest, Request) when is_atom(Name), is_atom(Node) -> do_cast(Dest, Request);
+cast(Dest, Request) when is_atom(Dest)                               -> do_cast(Dest, Request);
+cast(Dest, Request) when is_pid(Dest)                                -> do_cast(Dest, Request).
 
 
-
+-spec do_cast(Dest :: gen:server_ref(), Request :: _) -> 'ok'.
 do_cast(Dest, Request) ->
     do_send(Dest, cast_msg(Request)),
     ok.
@@ -72,6 +77,7 @@ cast_msg(Request) -> {'$gen_cast', Request}.
 
 
 % ほぼ `!` による送信と同じだが，`error' 例外が返ってきても無視する．
+-spec do_send(Dest :: gen:server_ref(), Msg :: _) -> 'ok'.
 do_send(Dest, Msg) ->
     try
         erlang:send(Dest, Msg)
@@ -86,7 +92,7 @@ do_send(Dest, Msg) ->
 -spec init_it(
     Starter :: pid(),          % `gen_server:start_link' などを呼び出したプロセスのPID．
     Parent  :: pid() | 'self', % リンクしている場合は `Starter' と同じ，リンクしていない場合は `self'．
-    Name    :: atom(),
+    Name    :: gen:emgr_name() | pid(),
     Mod  :: module(),  % `gen_server' コールバックモジュール
     Args :: _,         % `Mod:init/1' に与える引数
     Options :: gen:options()
@@ -96,6 +102,7 @@ init_it(Starter, self, Name, Mod, Args, Options) ->
 
 init_it(Starter, Parent, Name0, Mod, Args, Options) ->
     Name = gen:name(Name0),
+      % Name :: atom() | pid()
     Debug = gen:debug_options(Name, Options),
       % Debug :: [sys:dbg_opt()]
       %
@@ -178,7 +185,7 @@ init_it(Mod, Args) ->
 % メインループ
 -spec loop(
     Parent :: pid(),  % リンクされている場合は起動した親プロセスのPID，リンクされていない場合は自分自身のPID．
-    Name   :: atom(),
+    Name   :: atom() | pid(),
     State  :: _,        % 状態
     Mod    :: module(), % `gen_server' コールバックモジュール
     Time   :: {'continue', _} | 'hibernate' | timeout(),
@@ -233,12 +240,12 @@ loop(Parent, Name, State, Mod, Time, HibernateAfterTimeout, Debug) ->
     Msg :: {'system', _, _}
          | {'EXIT', Parent :: pid(), Reason :: _}
          | 'timeout'
-         | {'$gen_call', pid(), _}
+         | {'$gen_call', {pid(), reference()}, _}
          | {'$gen_cast', _}
          | _,
   % 第2-8引数は`loop' の引数と同じ
     Parent :: pid(),  % リンクされている場合は起動した親プロセスのPID，リンクされていない場合は自分自身のPID．
-    Name   :: atom(),
+    Name   :: atom() | pid(),
     State  :: _,        % 状態
     Mod    :: module(), % `gen_server' コールバックモジュール
     Time   :: {'continue', _} | 'hibernate' | timeout(),
@@ -272,11 +279,11 @@ decode_msg(Msg, Parent, Name, State, Mod, Time, HibernateAfterTimeout, Debug, Hi
 % 他の形式のメッセージは `handle_common_reply' に引き継ぐ．
 % デバッグ情報なし版．
 -spec handle_msg(
-    Msg :: {'$gen_call', pid(), _} | {'$gen_cast', _} | 'timeout' | _,
+    Msg :: {'$gen_call', {pid(), reference()}, _} | {'$gen_cast', _} | 'timeout' | _,
 
   % 以下は `loop' の対応する引数と同じ．
     Parent :: pid(),
-    Name   :: atom(),
+    Name   :: atom() | pid(),
     State  :: _,
     Mod    :: module(),
     HibernateAfterTimeout :: timeout()
@@ -354,6 +361,25 @@ handle_msg({'$gen_call', From, Msg}, Parent, Name, State, Mod, HibernateAfterTim
 handle_msg(Msg, Parent, Name, State, Mod, HibernateAfterTimeout, Debug) ->
     Reply = try_dispatch(Msg, Mod, State),
     handle_common_reply(Reply, Parent, Name, undefined, Msg, Mod, HibernateAfterTimeout, State, Debug).
+
+
+% 同期的リクエストに対するレスポンスを送信する．失敗しても `ok' を戻り値とする．
+-spec reply({pid(), reference()}, _) -> 'ok'.
+reply({To, Tag}, Reply) ->
+    catch To ! {Tag, Reply},
+    ok.
+
+% `reply/2' のデバッグ機能つき版．
+-spec reply(
+    Name  :: atom() | pid(),
+    From  :: {pid(), reference()},
+    Reply :: _,
+    State :: _,
+    Debug :: [sys:dbg_opt()]
+) -> [sys:dbg_opt()].
+reply(Name, From, Reply, State, Debug) ->
+    reply(From, Reply),
+    sys:handle_debug(Debug, fun print_event/3, Name, {out, Reply, From, State}).
 
 
 % `handle_msg' で使われる．
@@ -443,7 +469,7 @@ terminate(Class, Reason, Stacktrace, Name, From, Msg, Mod, State, Debug) ->
     Reason       :: 'normal' | 'shutdown' | {'shutdown', _} | _,
     Stacktrace   :: _,
     ReportReason :: _,
-    Name         :: atom(),
+    Name         :: atom() | pid(),
     From         :: pid(),
     Msg          :: _,
     Mod          :: module(),

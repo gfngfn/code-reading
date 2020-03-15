@@ -28,14 +28,14 @@
 -type linkage() ::
     'monitor' | 'link' | 'nolink'.
 
-%% プロセスの登録名として与えられるデータの型．
+%% プロセスを登録する際の指定方法として与えられるデータの型．
 -type emgr_name() ::
-    {'local' , atom()}
-  | {'global', term()}
-  | {'via'   , Module :: module(), Name :: term()}.
+    {'local', atom()}
+  | {'global', _}
+  | {'via', Module :: module(), Name :: _}.
 
 -type start_ret() ::
-    {'ok', pid()} | 'ignore' | {'error', term()}.
+    {'ok', pid()} | 'ignore' | {'error', _}.
 
 -type debug_flag() ::
     'trace' | 'log' | 'statistics' | 'debug' | {'logfile', string()}.
@@ -49,8 +49,13 @@
 
 -type options() :: [option()].
 
+%% プロセスを指し示すデータの型．
 -type server_ref() ::
-   pid() | atom() | {atom(), node()} | {global, term()} | {via, module(), term()}.
+    pid()
+  | atom()
+  | {atom(), node()}
+  | {'global', _}
+  | {'via', module(), _}.
 
 -type request_id() :: term().
 
@@ -169,8 +174,7 @@ init_it(GenMod, Starter, Parent, Name, Mod, Args, Options) ->
       % リンク上の親プロセス．
       % リンクする場合は `Starter' と同じ，リンクしない場合は `self' というアトム．
     Name    :: emgr_name() | pid(),
-      % 登録名なしの場合は新たに起動したプロセス
-
+      % 新たに立ち上げたプロセスの登録名の指定，または登録名なしの場合はPID．
     Mod  :: module(),
     Args :: _,
     Options :: options()
@@ -186,6 +190,14 @@ init_it2(GenMod, Starter, Parent, Name, Mod, Args, Options) ->
       % `Args' はその初期化函数（`Mod:init/1' など）に対する引数．
 
 
+% ノード内ローカルに通用する登録名またはPIDを得る．
+-spec name(emgr_name() | pid()) -> atom() | pid().
+name({local, Name})        -> Name;
+name({global, Name})       -> Name;
+name({via, _, Name})       -> Name;
+name(Pid) when is_pid(Pid) -> Pid.
+
+
 % `gen:call/4' のタイムアウト無指定版．デフォルトのタイムアウト値を用いる．
 call(Process, Label, Request) ->
     call(Process, Label, Request, ?default_timeout).
@@ -194,8 +206,8 @@ call(Process, Label, Request) ->
 % ※原文コメント：
 %% Optimize a common case.
 -spec call(
-    Process :: proc_identifier(),  % 送信先のPIDまたは登録名
-    Label   :: atom(),
+    Process :: gen:server_ref(),  % 送信先の指定
+    Label   :: atom(),            % `$gen_call' など
     Request :: _,
     Timeout :: timeout()
 ) -> {'ok', _}.
@@ -214,6 +226,10 @@ call(Process, Label, Request, Timeout) when
       % 登録名として存在しない場合は `exit(noproc)' で落ちる．
 
 
+-spec do_for_proc(
+    Dest :: gen:server_ref(),
+    Fun  :: fun((pid() | {Name :: atom(), Node :: node()}) -> Ret)) -> Ret
+    when Ret :: _.
 do_for_proc(Pid, Fun) when is_pid(Pid) ->
     Fun(Pid);
 
@@ -223,15 +239,50 @@ do_for_proc(Name, Fun) when is_atom(Name) ->
         undefined            -> exit(noproc)
     end;
 
+do_for_proc(Process, Fun)
+    when ((tuple_size(Process) == 2 andalso element(1, Process) == global)
+        orelse (tuple_size(Process) == 3 andalso element(1, Process) == via)) ->
+  % 第1引数 `Process' が `{global, _}' または `{via, _, _}' の形のとき
+    case where(Process) of
+        Pid when is_pid(Pid) ->
+            Node = node(Pid),
+            try
+                Fun(Pid)
+            catch
+                exit:{nodedown, Node} ->
+                    % ※原文コメント：
+                    %% A nodedown not yet detected by global,
+                    %% pretend that it was.
+                    exit(noproc)
+            end;
+
+        undefined ->
+            exit(noproc)
+    end;
+
+do_for_proc({Name, Node}, Fun) when Node =:= node() ->
+    do_for_proc(Name, Fun);
+
+do_for_proc({_Name, Node} = Process, Fun) when is_atom(Node) ->
+    if
+        node() =:= nonode@nohost -> exit({nodedown, Node});
+        true                     -> Fun(Process)
+    end.
+
 
 -spec do_call(
-    Process :: pid(),     % 送信先PID
+    Process :: pid() | atom() | {Name :: atom(), Node :: node()},
+                          % 送信先．ローカルな場合はPID，別ノードの場合は登録名とノード名の組
     Label   :: atom(),    % ラベル．`$gen_call' など
     Request :: _,         % `gen_server:call' などに与えられた送信内容
     Timeout :: timeout()  % レスポンスを待つ最大時間
 ) -> {'ok', _}.
 do_call(Process, Label, Request, Timeout) when is_atom(Process) =:= false ->
     Mref = erlang:monitor(process, Process),
+      % `erlang:monitor' は第2引数としてPIDに限らず
+      % `pid() | atom() | {Name :: atom(), Node :: node()}' の形式を受けつける．
+      % 参考：
+      %   http://erlang.org/doc/man/erlang.html#monitor-2
 
     % ※原文コメント：
     %% OTP-21:
