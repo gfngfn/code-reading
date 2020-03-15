@@ -184,3 +184,81 @@ init_it2(GenMod, Starter, Parent, Name, Mod, Args, Options) ->
       % `gen_server:init_it/6' など．
       % `Mod' は `GenMod' が要請するビヘイビアに対するコールバックモジュール，
       % `Args' はその初期化函数（`Mod:init/1' など）に対する引数．
+
+
+% `gen:call/4' のタイムアウト無指定版．デフォルトのタイムアウト値を用いる．
+call(Process, Label, Request) ->
+    call(Process, Label, Request, ?default_timeout).
+
+% 送信先の指定がPIDの場合．
+% ※原文コメント：
+%% Optimize a common case.
+-spec call(
+    Process :: proc_identifier(),  % 送信先のPIDまたは登録名
+    Label   :: atom(),
+    Request :: _,
+    Timeout :: timeout()
+) -> {'ok', _}.
+  % 送信失敗の場合は `exit' 例外が送出される．
+  % `gen_server:call' の実装などでは，この例外が `catch' プリミティヴによって捕捉されている．
+call(Process, Label, Request, Timeout) when
+        is_pid(Process), Timeout =:= infinity orelse is_integer(Timeout) andalso Timeout >= 0 ->
+    do_call(Process, Label, Request, Timeout);
+
+% 送信先の指定が（同一ノード内の）登録名の場合．
+call(Process, Label, Request, Timeout) when
+        Timeout =:= infinity; is_integer(Timeout), Timeout >= 0 ->
+    Fun = fun(Pid) -> do_call(Pid, Label, Request, Timeout) end,
+    do_for_proc(Process, Fun).
+      % 単に登録名 `Process' を `whereis/1' でPIDに変換して `Fun' に適用するだけ．
+      % 登録名として存在しない場合は `exit(noproc)' で落ちる．
+
+
+do_for_proc(Pid, Fun) when is_pid(Pid) ->
+    Fun(Pid);
+
+do_for_proc(Name, Fun) when is_atom(Name) ->
+    case whereis(Name) of
+	Pid when is_pid(Pid) -> Fun(Pid);
+	undefined            -> exit(noproc)
+    end;
+
+
+-spec do_call(
+    Process :: pid(),     % 送信先PID
+    Label   :: atom(),    % ラベル．`$gen_call' など
+    Request :: _,         % `gen_server:call' などに与えられた送信内容
+    Timeout :: timeout()  % レスポンスを待つ最大時間
+) -> {'ok', _}.
+do_call(Process, Label, Request, Timeout) when is_atom(Process) =:= false ->
+    Mref = erlang:monitor(process, Process),
+
+    % ※原文コメント：
+    %% OTP-21:
+    %% Auto-connect is asynchronous. But we still use 'noconnect' to make sure
+    %% we send on the monitored connection, and not trigger a new auto-connect.
+    erlang:send(Process, {Label, {self(), Mref}, Request}, [noconnect]),
+      % メッセージの形式は `{ラベル, {送信元PID, 1回の送受信に使うモニタ参照}, リクエスト本体}'
+
+    receive
+        {Mref, Reply} ->
+          % レスポンスが正常に受信できたとき
+            erlang:demonitor(Mref, [flush]),
+            {ok, Reply};
+
+        {'DOWN', Mref, _, _, noconnection} ->
+          % 送信先がノードごと接続できないとき
+            Node = get_node(Process),
+            exit({nodedown, Node});
+
+        {'DOWN', Mref, _, _, Reason} ->
+          % 送信先プロセスが何らかの理由で終了したとき，または既に終了していたとき
+          % （`erlang:monitor` は既に終了しているプロセスにモニタを張ろうとしたら
+          % 即座に自身のメールボックスに `{'DOWN', Mref, process, Process, noproc}' を入れる）
+            exit(Reason)
+
+    after Timeout ->
+      % 制限時間内にレスポンスが返ってこなかったとき
+        erlang:demonitor(Mref, [flush]),
+        exit(timeout)
+    end.
